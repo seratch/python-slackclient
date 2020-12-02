@@ -15,6 +15,7 @@ from sqlalchemy import (
     MetaData,
 )
 from sqlalchemy.engine import Engine
+from sqlalchemy.sql.sqltypes import Boolean
 
 from slack_sdk.oauth.installation_store.installation_store import InstallationStore
 from slack_sdk.oauth.installation_store.models.bot import Bot
@@ -39,7 +40,10 @@ class SQLAlchemyInstallationStore(InstallationStore):
             Column("client_id", String, nullable=False),
             Column("app_id", String, nullable=False),
             Column("enterprise_id", String),
+            Column("enterprise_name", String),
+            Column("enterprise_url", String),
             Column("team_id", String),
+            Column("team_name", String),
             Column("bot_token", String),
             Column("bot_id", String),
             Column("bot_user_id", String),
@@ -48,8 +52,11 @@ class SQLAlchemyInstallationStore(InstallationStore):
             Column("user_token", String),
             Column("user_scopes", String),
             Column("incoming_webhook_url", String),
+            Column("incoming_webhook_channel", String),
             Column("incoming_webhook_channel_id", String),
             Column("incoming_webhook_configuration_url", String),
+            Column("is_enterprise_install", Boolean, default=False, nullable=False),
+            Column("token_type", String),
             Column(
                 "installed_at",
                 DateTime,
@@ -75,11 +82,14 @@ class SQLAlchemyInstallationStore(InstallationStore):
             Column("client_id", String, nullable=False),
             Column("app_id", String, nullable=False),
             Column("enterprise_id", String),
+            Column("enterprise_name", String),
             Column("team_id", String),
+            Column("team_name", String),
             Column("bot_token", String),
             Column("bot_id", String),
             Column("bot_user_id", String),
             Column("bot_scopes", String),
+            Column("is_enterprise_install", Boolean, default=False, nullable=False),
             Column(
                 "installed_at",
                 DateTime,
@@ -131,8 +141,15 @@ class SQLAlchemyInstallationStore(InstallationStore):
             conn.execute(self.bots.insert(), b)
 
     def find_bot(
-        self, *, enterprise_id: Optional[str], team_id: Optional[str]
+        self,
+        *,
+        enterprise_id: Optional[str],
+        team_id: Optional[str],
+        is_enterprise_install: Optional[bool] = False,
     ) -> Optional[Bot]:
+        if is_enterprise_install or team_id is None:
+            team_id = None
+
         c = self.bots.c
         query = (
             self.bots.select()
@@ -147,11 +164,71 @@ class SQLAlchemyInstallationStore(InstallationStore):
                 return Bot(
                     app_id=row["app_id"],
                     enterprise_id=row["enterprise_id"],
+                    enterprise_name=row["enterprise_name"],
                     team_id=row["team_id"],
+                    team_name=row["team_name"],
                     bot_token=row["bot_token"],
                     bot_id=row["bot_id"],
                     bot_user_id=row["bot_user_id"],
                     bot_scopes=row["bot_scopes"],
+                    is_enterprise_install=row["is_enterprise_install"],
+                    installed_at=row["installed_at"],
+                )
+            return None
+
+    def find_installation(
+        self,
+        *,
+        enterprise_id: Optional[str],
+        team_id: Optional[str],
+        user_id: Optional[str] = None,
+        is_enterprise_install: Optional[bool] = False,
+    ) -> Optional[Installation]:
+        if is_enterprise_install or team_id is None:
+            team_id = None
+
+        c = self.installations.c
+        where_clause = and_(c.enterprise_id == enterprise_id, c.team_id == team_id)
+        if user_id is not None:
+            where_clause = and_(
+                c.enterprise_id == enterprise_id,
+                c.team_id == team_id,
+                c.user_id == user_id,
+            )
+
+        query = (
+            self.installations.select()
+            .where(where_clause)
+            .order_by(desc(c.installed_at))
+            .limit(1)
+        )
+
+        with self.engine.connect() as conn:
+            result: object = conn.execute(query)
+            for row in result:
+                return Installation(
+                    app_id=row["app_id"],
+                    enterprise_id=row["enterprise_id"],
+                    enterprise_name=row["enterprise_name"],
+                    enterprise_url=row["enterprise_url"],
+                    team_id=row["team_id"],
+                    team_name=row["team_name"],
+                    bot_token=row["bot_token"],
+                    bot_id=row["bot_id"],
+                    bot_user_id=row["bot_user_id"],
+                    bot_scopes=row["bot_scopes"],
+                    user_id=row["user_id"],
+                    user_token=row["user_token"],
+                    user_scopes=row["user_scopes"],
+                    # Only the incoming webhook issued in the latest installation is set in this logic
+                    incoming_webhook_url=row["incoming_webhook_url"],
+                    incoming_webhook_channel=row["incoming_webhook_channel"],
+                    incoming_webhook_channel_id=row["incoming_webhook_channel_id"],
+                    incoming_webhook_configuration_url=row[
+                        "incoming_webhook_configuration_url"
+                    ],
+                    is_enterprise_install=row["is_enterprise_install"],
+                    token_type=row["token_type"],
                     installed_at=row["installed_at"],
                 )
             return None
